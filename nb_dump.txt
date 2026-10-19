@@ -1,0 +1,188 @@
+---MD---
+## Step 1: set kaggle token 
+This tells the Kaggle tool "here's who I am" every time it tries to download something, without needing a saved file.
+---CODE---
+import os
+
+os.environ['KAGGLE_USERNAME'] = 'geminidesilva'
+os.environ['KAGGLE_KEY'] = 'YOUR_KAGGLE_KEY'
+---MD---
+## Step 2:  Download the kaggle and actual dataset
+---CODE---
+!pip install kaggle
+!kaggle datasets download -d lakshmi25npathi/imdb-dataset-of-50k-movie-reviews
+---MD---
+## Step 3: Unzip file
+This just extracts the CSV file that's inside the zip into a new folder called imdb_data.
+---CODE---
+import zipfile
+
+with zipfile.ZipFile('imdb-dataset-of-50k-movie-reviews.zip', 'r') as zip_ref:
+    zip_ref.extractall('imdb_data')
+---MD---
+ ## Step 4: Load it with pandas
+- df.shape should print (50000, 2) — meaning 50,000 rows and 2 columns.
+- df.head() shows you the first 5 rows so you can actually see the data.
+---CODE---
+import pandas as pd
+
+df = pd.read_csv('imdb_data/IMDB Dataset.csv')
+print(df.shape)
+df.head()
+---MD---
+####  Look at one raw review closely
+This prints just the very first review, uncut. Look closely — you'll probably see things like <<br>> (leftover HTML line breaks), extra punctuation, mixed capitalization. That messiness is exactly what we'll clean in the next step.
+---CODE---
+print(df['review'][0])
+---MD---
+#### check the labels:
+This tells you how many reviews are labeled "positive" vs "negative" — good to confirm the dataset is balanced (should be 25,000 each).
+---CODE---
+df['sentiment'].value_counts()
+---MD---
+## Step 5: Cleaning Data
+---MD---
+#### import what we need
+re = Python's built-in library for finding/removing patterns in text (called "regular expressions") <br>
+nltk = helps us get the dataset and clean text <br>
+stopwords = a list of common filler words ("the", "is", "and", "a") that don't carry sentiment meaning
+---CODE---
+import re
+import nltk
+from nltk.corpus import stopwords
+
+nltk.download('stopwords')
+---MD---
+#### cleaning function
+- re.sub(r'<.*?>', ' ', text) → finds anything between < and > (like <br />) and replaces it with a space
+- re.sub(r'[^a-zA-Z\s]', '', text) → keeps only letters and spaces, deletes everything else (numbers, commas, exclamation marks, etc.)
+- .lower() → makes "Amazing" and "amazing" count as the same word
+- .split() → breaks the sentence into a list of individual words, e.g. "great movie" → ["great", "movie"]
+- The list comprehension removes any word that's in our stop_words list
+- ' '.join(words) → glues the remaining words back into one string
+---CODE---
+stop_words = set(stopwords.words('english'))
+
+def clean_text(text):
+    text = re.sub(r'<.*?>', ' ', text)          # remove HTML tags like <br />
+    text = re.sub(r'[^a-zA-Z\s]', '', text)      # remove punctuation & numbers
+    text = text.lower()                          # lowercase everything
+    words = text.split()                         # split into individual words
+    stop_words = set(stopwords.words('english')) - {'not', 'no', 'never', 'nor'}
+    words = [w for w in words if w not in stop_words]  # remove stopwords
+    return ' '.join(words)                        # join back into 
+---MD---
+#### Apply it to the whole dataset
+This runs clean_text on all 50,000 reviews.
+---CODE---
+df['cleaned_review'] = df['review'].apply(clean_text)
+---MD---
+#### Compare before and after
+---CODE---
+print("BEFORE:")
+print(df['review'][0])
+print("\nAFTER:")
+print(df['cleaned_review'][0])
+---MD---
+## Step 6: Split the data first 
+---CODE---
+from sklearn.model_selection import train_test_split
+
+X = df['cleaned_review']
+y = df['sentiment']
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+print(X_train.shape, X_test.shape)
+---MD---
+- X = our input (the cleaned review text)
+- y = our target/label (positive or negative)
+- train_test_split shuffles the data and splits it: 80% for training (X_train, y_train), 20% for testing (X_test, y_test)
+- random_state=42 just makes sure the split is the same every time you rerun it (so results are reproducible) — 42 is an arbitrary number, could be anything
+- We split into train/test before vectorizing so that the test set stays completely "unseen" — like a real exam, not one where the model already saw the answers
+---MD---
+## Step 7: Vectorize — turn words into numbers
+---CODE---
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+vectorizer = TfidfVectorizer(max_features=15000, ngram_range=(1,3))
+
+X_train_vec = vectorizer.fit_transform(X_train)
+X_test_vec = vectorizer.transform(X_test)
+
+print(X_train_vec.shape)
+---MD---
+# What's happening here:
+
+- TfidfVectorizer looks at all the words across all reviews and scores each word by how important/distinctive it is (a word like "boring" that shows up a lot in negative reviews but rarely elsewhere gets a meaningful score; a word that's everywhere gets a low score)
+- max_features=10000 means: only keep the top 10,000 most useful words — otherwise we'd have tens of thousands of columns, one per unique word, which gets slow and messy
+- ngram_range=(1,2) → this is the bigger win. Right now the model only looks at single words ("unigrams"). Adding (1,2) also considers pa
+---MD---
+## Step 8: Train Model
+---CODE---
+from sklearn.linear_model import LogisticRegression
+
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train_vec, y_train)
+---MD---
+Whats happening here
+- LogisticRegression is a simple, fast algorithm that's great for "yes/no" or "this/that" type predictions (positive vs negative — perfect fit here)
+- max_iter=1000 just gives it enough attempts to fine-tune itself properly before giving up (default is sometimes too low and throws a warning)
+- model.fit(X_train_vec, y_train) is the actual "training" — this is the line where the model looks at all 40,000 reviews (as numbers) alongside their correct labels, and learns which word-patterns tend to show up in positive vs negative reviews
+---MD---
+## Step 9: Testing
+---CODE---
+from sklearn.metrics import accuracy_score, classification_report
+
+y_pred = model.predict(X_test_vec)
+
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+---MD---
+Whats happening,
+- model.predict(X_test_vec) → asks the model to guess positive/negative for the 10,000 reviews it has never seen before (our test set)
+- accuracy_score → compares its guesses (y_pred) against the real answers (y_test) and tells you the % it got right
+- classification_report → gives more detail: precision (when it says "positive," how often is it actually right), recall (out of all actual positives, how many did it catch), and f1-score (a balance of both)
+---MD---
+## Step 10: A function to predict new sentences
+---CODE---
+def predict_sentiment(text):
+    cleaned = clean_text(text)              # use the SAME cleaning function from before
+    vectorized = vectorizer.transform([cleaned])   # use the SAME vectorizer (not fit_transform!)
+    prediction = model.predict(vectorized)
+    return prediction[0]
+---MD---
+Why this matters:
+- We reuse clean_text so the new sentence goes through identical cleaning as the training data
+- We use vectorizer.transform (not fit_transform) because the vectorizer already learned its vocabulary from training — we're just applying that same vocabulary to the new sentence
+- If you skip either step, the model will get garbage input and give a nonsense prediction
+---CODE---
+print(predict_sentiment("This movie was absolutely amazing, I loved every second of it!"))
+---CODE---
+print(predict_sentiment("Terrible movie, complete waste of time, I regret watching it."))
+---CODE---
+print(predict_sentiment("It was okay, not great but not terrible either."))
+---CODE---
+print (predict_sentiment("not good"))
+---CODE---
+!pip install streamlit
+---CODE---
+import joblib
+
+joblib.dump(model, 'sentiment_model.pkl')
+joblib.dump(vectorizer, 'tfidf_vectorizer.pkl')
+---CODE---
+
+---CODE---
+
+---CODE---
+
+---CODE---
+
+---CODE---
+
+---CODE---
+
+---CODE---
